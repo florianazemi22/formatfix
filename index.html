@@ -96,7 +96,7 @@
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-  dlEl.onclick = async () => {
+  async function save(auto) {
     if (!blob) return;
     // Phones/tablets: the share sheet offers "Save to Files / Downloads"
     if (isMobile && navigator.canShare) {
@@ -108,14 +108,16 @@
         }
       } catch (e) {
         if (e.name === 'AbortError') return;   // user closed the share sheet
+        if (auto) { status('Done. Press "Download PDF" to save it.'); return; }  // share needs a tap
       }
     }
     // Desktop / fallback: classic download
     const a = document.createElement('a');
     a.href = url; a.download = outName;
     document.body.appendChild(a); a.click(); a.remove();
-    status('If nothing was saved, use "Or open it in a new tab" below and save from there.');
-  };
+    status('Downloaded. If nothing was saved, press "Download PDF" again or use "Or open it in a new tab".');
+  }
+  dlEl.onclick = () => save(false);
 
   goEl.onclick = async () => {
     goEl.disabled = true; dlEl.disabled = true; openEl.style.display = 'none'; status('Converting…');
@@ -128,7 +130,8 @@
       outName = file.name.replace(/\.pdf$/i, '') + '_B6_side-by-side.pdf';
       openEl.href = url; openEl.style.display = 'block';
       dlEl.disabled = false;
-      status('Done. Press "Download PDF" to save it.');
+      status('Done.');
+      save(true);   // start the download automatically
     } catch (e) {
       console.error(e);
       status('Could not process this PDF: ' + e.message, true);
