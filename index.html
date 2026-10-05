@@ -103,7 +103,7 @@
       try {
         const f = new File([blob], outName, { type: 'application/pdf' });
         if (navigator.canShare({ files: [f] })) {
-          await navigator.share({ files: [f], title: outName });
+          await navigator.share({ files: [f] });   // files only: a title/text makes some apps save an extra .txt
           return;
         }
       } catch (e) {
