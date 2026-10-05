@@ -60,8 +60,6 @@
 </main>
 
 <script src="pdf-lib.min.js"></script>
-<script src="pdf.min.js"></script>
-<script src="jszip.min.js"></script>
 <script>
 (() => {
   const { PDFDocument, rgb } = PDFLib;
@@ -72,7 +70,19 @@
   const $ = id => document.getElementById(id);
   const fileEl = $('file'), goEl = $('go'), statusEl = $('status'), dlEl = $('dl'), openEl = $('open'), dropEl = $('drop');
   let file = null, url = null, blob = null, outName = 'output.pdf';
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
+  // The JPEG libraries are loaded only when needed, so a problem there can never break PDF upload/convert
+  const loaded = {};
+  function loadScript(src) {
+    return loaded[src] || (loaded[src] = new Promise((res, rej) => {
+      const el = document.createElement('script');
+      el.src = src; el.onload = res; el.onerror = () => { delete loaded[src]; rej(new Error('Could not load ' + src)); };
+      document.head.appendChild(el);
+    }));
+  }
+  async function loadJpegLibs() {
+    await Promise.all([loadScript('pdf.min.js'), loadScript('jszip.min.js')]);
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
+  }
   $('fmt').onchange = () => { $('dpiRow').style.display = $('fmt').value === 'jpg' ? 'flex' : 'none'; };
 
   function setFile(f) {
@@ -174,6 +184,7 @@
       const base = file.name.replace(/\.pdf$/i, '') + '_B6_side-by-side';
       if (url) URL.revokeObjectURL(url);
       if ($('fmt').value === 'jpg') {
+        await loadJpegLibs();
         const jpgs = await toJpegs(result, +$('dpi').value);
         if (jpgs.length === 1) { blob = jpgs[0]; outName = base + '.jpg'; }
         else {
