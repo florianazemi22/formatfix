@@ -22,7 +22,8 @@
   button:disabled { opacity:.5; cursor:default; }
   #status { margin-top:14px; min-height:1.5em; color:var(--muted); }
   #status.err { color:#dc2626; }
-  a#dl { display:none; margin-top:14px; text-align:center; padding:12px; border:1px solid var(--accent); border-radius:8px; color:var(--accent); text-decoration:none; font-weight:600; }
+  button#dl { background:#16a34a; }
+  a#open { display:none; margin-top:10px; text-align:center; color:var(--accent); font-size:.95rem; }
 </style>
 </head>
 <body>
@@ -39,7 +40,8 @@
 
   <button id="go" disabled>Convert</button>
   <div id="status"></div>
-  <a id="dl">Download PDF</a>
+  <button id="dl" disabled>Download PDF</button>
+  <a id="open" target="_blank" rel="noopener">Or open it in a new tab</a>
 </main>
 
 <script src="pdf-lib.min.js"></script>
@@ -51,15 +53,15 @@
   const B6_W = 128 * MM, B6_H = 182 * MM;     // B6 portrait
 
   const $ = id => document.getElementById(id);
-  const fileEl = $('file'), goEl = $('go'), statusEl = $('status'), dlEl = $('dl'), dropEl = $('drop');
-  let file = null, url = null;
+  const fileEl = $('file'), goEl = $('go'), statusEl = $('status'), dlEl = $('dl'), openEl = $('open'), dropEl = $('drop');
+  let file = null, url = null, outName = 'output.pdf';
 
   function setFile(f) {
     if (!f) return;
     file = f;
     $('fname').textContent = f.name;
     goEl.disabled = false;
-    dlEl.style.display = 'none';
+    dlEl.disabled = true; openEl.style.display = 'none';
     status('');
   }
   function status(msg, err) { statusEl.textContent = msg; statusEl.className = err ? 'err' : ''; }
@@ -91,17 +93,24 @@
     return out.save();
   }
 
+  dlEl.onclick = () => {
+    if (!url) return;
+    const a = document.createElement('a');
+    a.href = url; a.download = outName;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+
   goEl.onclick = async () => {
-    goEl.disabled = true; dlEl.style.display = 'none'; status('Converting…');
+    goEl.disabled = true; dlEl.disabled = true; openEl.style.display = 'none'; status('Converting…');
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await convert(bytes, $('guides').checked);
       if (url) URL.revokeObjectURL(url);
       url = URL.createObjectURL(new Blob([result], { type: 'application/pdf' }));
-      dlEl.href = url;
-      dlEl.download = file.name.replace(/\.pdf$/i, '') + '_B6_side-by-side.pdf';
-      dlEl.style.display = 'block';
-      status('Done.');
+      outName = file.name.replace(/\.pdf$/i, '') + '_B6_side-by-side.pdf';
+      openEl.href = url; openEl.style.display = 'block';
+      dlEl.disabled = false;
+      status('Done. Press "Download PDF" to save it.');
     } catch (e) {
       console.error(e);
       status('Could not process this PDF: ' + e.message, true);
