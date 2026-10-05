@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FormatFix – PDF side by side</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1c1f26; --muted:#6b7280; --accent:#2563eb; --border:#d5d9e0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161a; --card:#1e2127; --text:#eceef2; --muted:#9aa1ad; --accent:#5b8def; --border:#363b45; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,sans-serif; padding:24px 16px; }
+  main { max-width:560px; margin:0 auto; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; }
+  h1 { margin:0 0 4px; font-size:1.4rem; }
+  p.sub { margin:0 0 20px; color:var(--muted); }
+  #drop { display:block; border:2px dashed var(--border); border-radius:10px; padding:32px 16px; text-align:center; cursor:pointer; }
+  #drop.over { border-color:var(--accent); }
+  #drop input { display:none; }
+  label.opt { display:flex; gap:8px; align-items:center; margin-top:14px; color:var(--muted); font-size:.95rem; }
+  button { margin-top:18px; width:100%; padding:12px; font-size:1rem; border:0; border-radius:8px; background:var(--accent); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  #status { margin-top:14px; min-height:1.5em; color:var(--muted); }
+  #status.err { color:#dc2626; }
+  a#dl { display:none; margin-top:14px; text-align:center; padding:12px; border:1px solid var(--accent); border-radius:8px; color:var(--accent); text-decoration:none; font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>PDF side by side</h1>
+  <p class="sub">Upload a PDF. Each page is copied twice, side by side, as B6 (128×182 mm) on an A4 landscape sheet.</p>
+
+  <label id="drop">
+    <input type="file" id="file" accept="application/pdf,.pdf">
+    <span id="fname">Click or drop a PDF here</span>
+  </label>
+
+  <label class="opt"><input type="checkbox" id="guides" checked> Draw thin cut guides around each B6 copy</label>
+
+  <button id="go" disabled>Convert</button>
+  <div id="status"></div>
+  <a id="dl">Download PDF</a>
+</main>
+
+<script src="pdf-lib.min.js"></script>
+<script>
+(() => {
+  const { PDFDocument, rgb } = PDFLib;
+  const MM = 72 / 25.4;
+  const A4_W = 297 * MM, A4_H = 210 * MM;     // A4 landscape
+  const B6_W = 128 * MM, B6_H = 182 * MM;     // B6 portrait
+
+  const $ = id => document.getElementById(id);
+  const fileEl = $('file'), goEl = $('go'), statusEl = $('status'), dlEl = $('dl'), dropEl = $('drop');
+  let file = null, url = null;
+
+  function setFile(f) {
+    if (!f) return;
+    file = f;
+    $('fname').textContent = f.name;
+    goEl.disabled = false;
+    dlEl.style.display = 'none';
+    status('');
+  }
+  function status(msg, err) { statusEl.textContent = msg; statusEl.className = err ? 'err' : ''; }
+
+  fileEl.onchange = () => setFile(fileEl.files[0]);
+  dropEl.ondragover = e => { e.preventDefault(); dropEl.classList.add('over'); };
+  dropEl.ondragleave = () => dropEl.classList.remove('over');
+  dropEl.ondrop = e => { e.preventDefault(); dropEl.classList.remove('over'); setFile(e.dataTransfer.files[0]); };
+
+  async function convert(bytes, guides) {
+    const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const out = await PDFDocument.create();
+    const pages = await out.embedPdf(src, src.getPageIndices());
+    const x0 = (A4_W - 2 * B6_W) / 2;
+    const y0 = (A4_H - B6_H) / 2;
+
+    for (const emb of pages) {
+      const sheet = out.addPage([A4_W, A4_H]);
+      // fit the source page inside a B6 cell, keeping aspect ratio, centred
+      const s = Math.min(B6_W / emb.width, B6_H / emb.height);
+      const w = emb.width * s, h = emb.height * s;
+      for (let i = 0; i < 2; i++) {
+        const cx = x0 + i * B6_W;
+        sheet.drawPage(emb, { x: cx + (B6_W - w) / 2, y: y0 + (B6_H - h) / 2, width: w, height: h });
+        if (guides) sheet.drawRectangle({ x: cx, y: y0, width: B6_W, height: B6_H,
+          borderColor: rgb(0.6, 0.6, 0.6), borderWidth: 0.25 });
+      }
+    }
+    return out.save();
+  }
+
+  goEl.onclick = async () => {
+    goEl.disabled = true; dlEl.style.display = 'none'; status('Converting…');
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const result = await convert(bytes, $('guides').checked);
+      if (url) URL.revokeObjectURL(url);
+      url = URL.createObjectURL(new Blob([result], { type: 'application/pdf' }));
+      dlEl.href = url;
+      dlEl.download = file.name.replace(/\.pdf$/i, '') + '_B6_side-by-side.pdf';
+      dlEl.style.display = 'block';
+      status('Done.');
+    } catch (e) {
+      console.error(e);
+      status('Could not process this PDF: ' + e.message, true);
+    }
+    goEl.disabled = false;
+  };
+})();
+</script>
+</body>
+</html>
