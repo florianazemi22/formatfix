@@ -54,7 +54,7 @@
 
   const $ = id => document.getElementById(id);
   const fileEl = $('file'), goEl = $('go'), statusEl = $('status'), dlEl = $('dl'), openEl = $('open'), dropEl = $('drop');
-  let file = null, url = null, outName = 'output.pdf';
+  let file = null, url = null, blob = null, outName = 'output.pdf';
 
   function setFile(f) {
     if (!f) return;
@@ -93,11 +93,28 @@
     return out.save();
   }
 
-  dlEl.onclick = () => {
-    if (!url) return;
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  dlEl.onclick = async () => {
+    if (!blob) return;
+    // Phones/tablets: the share sheet offers "Save to Files / Downloads"
+    if (isMobile && navigator.canShare) {
+      try {
+        const f = new File([blob], outName, { type: 'application/pdf' });
+        if (navigator.canShare({ files: [f] })) {
+          await navigator.share({ files: [f], title: outName });
+          return;
+        }
+      } catch (e) {
+        if (e.name === 'AbortError') return;   // user closed the share sheet
+      }
+    }
+    // Desktop / fallback: classic download
     const a = document.createElement('a');
     a.href = url; a.download = outName;
     document.body.appendChild(a); a.click(); a.remove();
+    status('If nothing was saved, use "Or open it in a new tab" below and save from there.');
   };
 
   goEl.onclick = async () => {
@@ -106,7 +123,8 @@
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await convert(bytes, $('guides').checked);
       if (url) URL.revokeObjectURL(url);
-      url = URL.createObjectURL(new Blob([result], { type: 'application/pdf' }));
+      blob = new Blob([result], { type: 'application/pdf' });
+      url = URL.createObjectURL(blob);
       outName = file.name.replace(/\.pdf$/i, '') + '_B6_side-by-side.pdf';
       openEl.href = url; openEl.style.display = 'block';
       dlEl.disabled = false;
