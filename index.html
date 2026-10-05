@@ -23,6 +23,7 @@
   #status { margin-top:14px; min-height:1.5em; color:var(--muted); }
   #status.err { color:#dc2626; }
   button#dl { background:#16a34a; }
+  select { margin-left:auto; padding:6px 8px; font-size:.95rem; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--text); }
   a#open { display:none; margin-top:10px; text-align:center; color:var(--accent); font-size:.95rem; }
 </style>
 </head>
@@ -38,13 +39,29 @@
 
   <label class="opt"><input type="checkbox" id="guides" checked> Draw thin cut guides around each B6 copy</label>
 
+  <label class="opt">Save as
+    <select id="fmt">
+      <option value="pdf">PDF</option>
+      <option value="jpg">JPEG (maximum quality)</option>
+    </select>
+  </label>
+  <label class="opt" id="dpiRow" style="display:none">Resolution
+    <select id="dpi">
+      <option value="300" selected>300 DPI – print quality</option>
+      <option value="200">200 DPI</option>
+      <option value="150">150 DPI – smaller file</option>
+    </select>
+  </label>
+
   <button id="go" disabled>Convert</button>
   <div id="status"></div>
-  <button id="dl" disabled>Download PDF</button>
+  <button id="dl" disabled>Download</button>
   <a id="open" target="_blank" rel="noopener">Or open it in a new tab</a>
 </main>
 
 <script src="pdf-lib.min.js"></script>
+<script src="pdf.min.js"></script>
+<script src="jszip.min.js"></script>
 <script>
 (() => {
   const { PDFDocument, rgb } = PDFLib;
@@ -55,6 +72,8 @@
   const $ = id => document.getElementById(id);
   const fileEl = $('file'), goEl = $('go'), statusEl = $('status'), dlEl = $('dl'), openEl = $('open'), dropEl = $('drop');
   let file = null, url = null, blob = null, outName = 'output.pdf';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
+  $('fmt').onchange = () => { $('dpiRow').style.display = $('fmt').value === 'jpg' ? 'flex' : 'none'; };
 
   function setFile(f) {
     if (!f) return;
@@ -93,6 +112,34 @@
     return out.save();
   }
 
+  // Render every page of the finished PDF to a JPEG at the chosen DPI (quality 1.0, white background)
+  async function toJpegs(pdfBytes, dpi) {
+    const doc = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+    const out = [];
+    for (let n = 1; n <= doc.numPages; n++) {
+      status(`Rendering page ${n} of ${doc.numPages}…`);
+      const page = await doc.getPage(n);
+      const vp = page.getViewport({ scale: dpi / 72 });
+      const c = document.createElement('canvas');
+      c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      const b = await new Promise(r => c.toBlob(r, 'image/jpeg', 1.0));
+      out.push(await withDpi(b, dpi));
+      c.width = c.height = 0;   // free memory
+    }
+    return out;
+  }
+  // Write the DPI into the JPEG header so print software knows the physical size
+  async function withDpi(b, dpi) {
+    const buf = new Uint8Array(await b.arrayBuffer());
+    if (buf[2] === 0xFF && buf[3] === 0xE0 && buf[6] === 0x4A && buf[7] === 0x46) { // JFIF
+      buf[13] = 1; buf[14] = dpi >> 8; buf[15] = dpi & 255; buf[16] = dpi >> 8; buf[17] = dpi & 255;
+    }
+    return new Blob([buf], { type: 'image/jpeg' });
+  }
+
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
@@ -101,21 +148,21 @@
     // Phones/tablets: the share sheet offers "Save to Files / Downloads"
     if (isMobile && navigator.canShare) {
       try {
-        const f = new File([blob], outName, { type: 'application/pdf' });
+        const f = new File([blob], outName, { type: blob.type });
         if (navigator.canShare({ files: [f] })) {
           await navigator.share({ files: [f] });   // files only: a title/text makes some apps save an extra .txt
           return;
         }
       } catch (e) {
         if (e.name === 'AbortError') return;   // user closed the share sheet
-        if (auto) { status('Done. Press "Download PDF" to save it.'); return; }  // share needs a tap
+        if (auto) { status('Done. Press "Download" to save it.'); return; }  // share needs a tap
       }
     }
     // Desktop / fallback: classic download
     const a = document.createElement('a');
     a.href = url; a.download = outName;
     document.body.appendChild(a); a.click(); a.remove();
-    status('Downloaded. If nothing was saved, press "Download PDF" again or use "Or open it in a new tab".');
+    status('Downloaded. If nothing was saved, press "Download" again or use "Or open it in a new tab".');
   }
   dlEl.onclick = () => save(false);
 
@@ -124,10 +171,22 @@
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await convert(bytes, $('guides').checked);
+      const base = file.name.replace(/\.pdf$/i, '') + '_B6_side-by-side';
       if (url) URL.revokeObjectURL(url);
-      blob = new Blob([result], { type: 'application/pdf' });
+      if ($('fmt').value === 'jpg') {
+        const jpgs = await toJpegs(result, +$('dpi').value);
+        if (jpgs.length === 1) { blob = jpgs[0]; outName = base + '.jpg'; }
+        else {
+          const zip = new JSZip();
+          jpgs.forEach((j, i) => zip.file(`${base}_page${i + 1}.jpg`, j));
+          blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+          outName = base + '.zip';
+        }
+      } else {
+        blob = new Blob([result], { type: 'application/pdf' });
+        outName = base + '.pdf';
+      }
       url = URL.createObjectURL(blob);
-      outName = file.name.replace(/\.pdf$/i, '') + '_B6_side-by-side.pdf';
       openEl.href = url; openEl.style.display = 'block';
       dlEl.disabled = false;
       status('Done.');
